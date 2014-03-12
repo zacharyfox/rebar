@@ -571,7 +571,13 @@ update_source(Config, Dep) ->
 
             Env = setup_env(Config1),
 
-            {true, ModuleSetFile} = rebar_app_utils:is_app_dir(AppDir),
+            case Dep#dep.is_raw of
+                false ->
+                    {true, ModuleSetFile} = rebar_app_utils:is_app_dir(AppDir);
+                true ->
+                    %% I have no idea...
+                    ModuleSetFile = ""
+            end,
 
             %% Execute any before_command plugins on this directory
             Config2 = rebar_core:execute_pre('update-deps', [],
