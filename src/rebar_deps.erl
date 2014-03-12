@@ -565,20 +565,30 @@ update_source(Config, Dep) ->
         true ->
             ?CONSOLE("Updating ~p from ~p\n", [Dep#dep.app, Dep#dep.source]),
             %% Check for and get command specific environments
-            Env = setup_env(Config),
+            {ok, CWD} = file:get_cwd(),
+            ok = file:set_cwd(AppDir),
+            Config1 = rebar_config:new(Config),
+
+            Env = setup_env(Config1),
 
             {true, ModuleSetFile} = rebar_app_utils:is_app_dir(AppDir),
 
             %% Execute any before_command plugins on this directory
-            Config1 = rebar_core:execute_pre('update-deps', [],
-                                  Config, ModuleSetFile, Env),
+            Config2 = rebar_core:execute_pre('update-deps', [],
+                                  Config1, ModuleSetFile, Env),
+
+            rebar_core:apply_hooks(pre_hooks, Config2, 'update-deps', Env),
+
             require_source_engine(Dep#dep.source),
             update_source1(AppDir, Dep#dep.source),
 
+            rebar_core:apply_hooks(post_hooks, Config2, 'update-deps', Env),
+
             %% Execute any after_command plugins on this directory
             rebar_core:execute_post('update-deps', [],
-                         Config1, ModuleSetFile, Env),
+                         Config2, ModuleSetFile, Env),
 
+            ok = file:set_cwd(CWD),
             Dep;
         false ->
             ?WARN("Skipping update for ~p: "
