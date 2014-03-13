@@ -47,11 +47,13 @@
                source,
                is_raw }). %% is_raw = true means non-Erlang/OTP dependency
 
+-record(subdir, {dir }).
+
 %% ===================================================================
 %% Public API
 %% ===================================================================
 
-preprocess(Config, _) ->
+preprocess(Config, AppFile) ->
     %% Side effect to set deps_dir globally for all dependencies from
     %% top level down. Means the root deps_dir is honoured or the default
     %% used globally since it will be set on the first time through here
@@ -78,12 +80,18 @@ preprocess(Config, _) ->
             %% any other calls to preprocess() for update-deps beyond the
             %% toplevel directory. They aren't actually harmful, but they slow
             %% things down unnecessarily.
+            SubDirs = collect_subdirs(rebar_utils:get_cwd(), Config3),
             NewConfig = lists:foldl(
+                    fun(D, Acc) ->
+                            rebar_config:set_skip_dir(Acc, D#subdir.dir)
+                    end,
+                    lists:foldl(
                           fun(D, Acc) ->
                                   rebar_config:set_skip_dir(Acc, D#dep.dir)
                           end,
                           Config3,
                           collect_deps(rebar_utils:get_cwd(), Config3)),
+                    SubDirs),
             %% Return the empty list, as we don't want anything processed before
             %% us.
             {ok, NewConfig, []};
@@ -188,13 +196,20 @@ do_check_deps(Config) ->
     %% the necessary transitivity of the deps
     {ok, save_dep_dirs(Config2, lists:reverse(PulledDeps))}.
 
-'update-deps'(Config, _) ->
-    Config1 = rebar_config:set_xconf(Config, depowner, dict:new()),
-    {Config2, UpdatedDeps} = update_deps_int(Config1, []),
-    DepOwners = rebar_config:get_xconf(Config2, depowner, dict:new()),
+'update-deps'(Config, AppFile) ->
+    SubDirs = collect_subdirs(rebar_utils:get_cwd(), Config),
+
+    {UpdatedDeps, DepOwners} = lists:foldl(fun(Dir, {UpdatedDepsAcc, DepOwnersAcc}) ->
+                ok = file:set_cwd(Dir),
+                Config0 = rebar_config:new(Config),
+                Config1 = rebar_config:set_xconf(Config0, depowner, DepOwnersAcc),
+                {Config2, UpdatedDeps} = update_deps_int(Config1, UpdatedDepsAcc),
+                DepOwners = rebar_config:get_xconf(Config2, depowner, DepOwnersAcc),
+                {UpdatedDeps, DepOwners}
+        end, {[], dict:new()}, [rebar_utils:get_cwd()|[S#subdir.dir || S <- SubDirs]]),
 
     %% check for conflicting deps
-    _ = [?ERROR("Conflicting dependencies for ~p: ~p~n",
+    _ = [?WARN("Conflicting dependencies for ~p: ~p~n",
                 [K, [{"From: " ++ string:join(dict:fetch(D, DepOwners), ", "),
                       {D#dep.vsn_regex, D#dep.source}} || D <- V]])
          || {K, V} <- dict:to_list(
@@ -699,17 +714,43 @@ should_skip_update_dep(Config, Dep) ->
 
 %% Recursively walk the deps and build a list of them.
 collect_deps(Dir, C) ->
+    CWD = rebar_utils:get_cwd(),
     case file:set_cwd(Dir) of
         ok ->
             Config = rebar_config:new(C),
             RawDeps = rebar_config:get_local(Config, deps, []),
             {Config1, Deps} = find_deps(Config, read, RawDeps),
+            ListSubdirs = [filename:absname(F) || F <- rebar_config:get_local(Config, sub_dirs, [])],
+
+            ok = file:set_cwd(CWD),
 
             lists:flatten(Deps ++ [begin
                                        {true, AppDir} = get_deps_dir(
                                                           Config1, Dep#dep.app),
                                        collect_deps(AppDir, C)
-                                   end || Dep <- Deps]);
+                                   end || Dep <- Deps] ++ [collect_deps(SubDir, C) || SubDir <- ListSubdirs]);
+        _ ->
+            []
+    end.
+
+
+collect_subdirs(Dir, C) ->
+    CWD = rebar_utils:get_cwd(),
+    case file:set_cwd(Dir) of
+        ok ->
+            Config = rebar_config:new(C),
+            RawDeps = rebar_config:get_local(Config, deps, []),
+            ListSubdirs = [#subdir{dir=filename:absname(F)} || F <- rebar_config:get_local(Config, sub_dirs, [])],
+            {Config1, Deps} = find_deps(Config, read, RawDeps),
+
+            ok = file:set_cwd(CWD),
+
+            lists:flatten(ListSubdirs ++ [begin
+                                       {true, AppDir} = get_deps_dir(
+                                                          Config1, Dep#dep.app),
+                                       collect_subdirs(AppDir, C)
+                                   end || Dep <- Deps] ++
+                          [collect_subdirs(D#subdir.dir, C) || D <- ListSubdirs]);
         _ ->
             []
     end.
