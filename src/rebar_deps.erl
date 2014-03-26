@@ -53,7 +53,7 @@
 %% Public API
 %% ===================================================================
 
-preprocess(Config, AppFile) ->
+preprocess(Config, _) ->
     %% Side effect to set deps_dir globally for all dependencies from
     %% top level down. Means the root deps_dir is honoured or the default
     %% used globally since it will be set on the first time through here
@@ -196,7 +196,7 @@ do_check_deps(Config) ->
     %% the necessary transitivity of the deps
     {ok, save_dep_dirs(Config2, lists:reverse(PulledDeps))}.
 
-'update-deps'(Config, AppFile) ->
+'update-deps'(Config, _) ->
     SubDirs = collect_subdirs(rebar_utils:get_cwd(), Config),
 
     {UpdatedDeps, DepOwners} = lists:foldl(fun(Dir, {UpdatedDepsAcc, DepOwnersAcc}) ->
